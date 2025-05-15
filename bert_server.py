@@ -1,41 +1,33 @@
-from flask import Flask, request, jsonify
+from fastapi import FastAPI, Request
+from pydantic import BaseModel
 from transformers import AutoTokenizer, AutoModelForQuestionAnswering
 import torch
 
-app = Flask(__name__)
+MODEL_NAME = "zlucia/legal-bert-base-uncased"
 
-# Load BERT Legal model and tokenizer
-MODEL_NAME = "nlpaueb/bert-legal-base"
+app = FastAPI()
+
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 model = AutoModelForQuestionAnswering.from_pretrained(MODEL_NAME)
 
-# Dummy legal context (you can enhance this with a database or document store)
-CONTEXT = """
-In California, the statute of limitations for a breach of contract is generally 4 years for written contracts and 2 years for oral contracts.
-"""
+class QuestionInput(BaseModel):
+    inputs: str
 
-@app.route('/inference', methods=['POST'])
-def inference():
-    data = request.get_json()
-    question = data.get("inputs")
+@app.post("/inference")
+async def inference(data: QuestionInput):
+    question = data.inputs
+    context = (
+        "Under the law, an agreement between two parties constitutes a binding contract "
+        "when certain legal conditions are met. These include offer, acceptance, consideration, and intent."
+    )
 
-    if not question:
-        return jsonify({"error": "No question provided"}), 400
-
-    inputs = tokenizer.encode_plus(question, CONTEXT, return_tensors="pt")
-    input_ids = inputs["input_ids"].tolist()[0]
-
-    with torch.no_grad():
-        outputs = model(**inputs)
-        answer_start_scores = outputs.start_logits
-        answer_end_scores = outputs.end_logits
+    inputs = tokenizer.encode_plus(question, context, return_tensors="pt")
+    answer_start_scores, answer_end_scores = model(**inputs).values()
 
     answer_start = torch.argmax(answer_start_scores)
     answer_end = torch.argmax(answer_end_scores) + 1
-    answer = tokenizer.convert_tokens_to_string(tokenizer.convert_ids_to_tokens(input_ids[answer_start:answer_end]))
+    answer = tokenizer.convert_tokens_to_string(
+        tokenizer.convert_ids_to_tokens(inputs["input_ids"][0][answer_start:answer_end])
+    )
 
-    return jsonify({"answer": answer.strip()})
-
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    return {"answer": answer}
